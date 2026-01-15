@@ -44,8 +44,8 @@ def start_countdown():
         return False  # Kembali ke awal
 
 # ========== Setup Motor Pins ==========
-IN1 = Pin(26, Pin.OUT) #oren
-IN2 = Pin(27, Pin.OUT) #merah
+IN1 = Pin(27, Pin.OUT) #oren
+IN2 = Pin(26, Pin.OUT) #merah
 IN3 = Pin(25, Pin.OUT) #coklat terang
 IN4 = Pin(33, Pin.OUT) #kuning
 
