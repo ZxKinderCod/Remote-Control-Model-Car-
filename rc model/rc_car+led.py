@@ -1,6 +1,6 @@
-from machine import Pin
+from machine import Pin, PWM
 import network
-import socket
+import socketc
 import sys
 import time
 
@@ -12,6 +12,8 @@ def cleanup():
     IN2.value(0)
     IN3.value(0)
     IN4.value(0)
+    # Matikan LED
+    LED.duty(0)
     # Matikan WiFi
     try:
         ap.active(False)
@@ -40,7 +42,7 @@ def start_countdown():
             time.sleep(1)
         return True  # Lanjut ke main program
     except KeyboardInterrupt:
-        print("\n Cancelled! Press Ctrl+C again to exit completely")
+        print("\n❌ Cancelled! Press Ctrl+C again to exit completely")
         return False  # Kembali ke awal
 
 # ========== Setup Motor Pins ==========
@@ -48,6 +50,11 @@ IN1 = Pin(16, Pin.OUT) #oren
 IN2 = Pin(26, Pin.OUT) #merah
 IN3 = Pin(27, Pin.OUT) #coklat terang
 IN4 = Pin(13, Pin.OUT) #kuning
+
+# ========== Setup LED Pin ==========
+LED = PWM(Pin(21), freq=1000)  # dengan PWM untuk brightness control
+LED.duty(0)  # Mulai dengan LED mati
+led_brightness = 1023  # Maksimal (0-1023, 1023 = paling terang)
 
 # ========== Fungsi Kontrol Motor ==========
 def maju():
@@ -81,6 +88,20 @@ def stop():
     IN4.value(0)
 
 stop()
+
+# ========== Fungsi Kontrol LED ==========
+def led_on():
+    LED.duty(led_brightness)
+
+def led_off():
+    LED.duty(0)
+
+def set_brightness(level):
+    global led_brightness
+    # level: 1 (redup) sampai 10 (terang)
+    led_brightness = int((level / 10) * 1023)
+    if LED.duty() > 0:  # Jika LED nyala, update brightness
+        LED.duty(led_brightness)
 
 # ========== HTML ==========
 html = """<!DOCTYPE html>
@@ -152,8 +173,16 @@ button:active {
 }
 #forward { grid-column: 2; }
 #left { grid-column: 1; grid-row: 2; }
+#ledBtn { grid-column: 2; grid-row: 2; }
 #right { grid-column: 3; grid-row: 2; }
 #backward { grid-column: 2; grid-row: 3; }
+.led-on {
+    background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%) !important;
+}
+.led-off {
+    background: linear-gradient(135deg, #4a5568 0%, #2d3748 100%) !important;
+    opacity: 0.6;
+}
 .info {
     background: rgba(255,255,255,0.15);
     backdrop-filter: blur(10px);
@@ -190,6 +219,12 @@ button:active {
             </div>
         </button>
         
+        <button id="ledBtn" ontouchstart="toggleLED()" onclick="toggleLED()">
+            <div class="btn-content" id="ledContent">
+                <div class="btn-icon"></div>
+            </div>
+        </button>
+        
         <button id="right" ontouchstart="cmd('R')" ontouchend="cmd('S')"
                 onmousedown="cmd('R')" onmouseup="cmd('S')">
             <div class="btn-content">
@@ -214,17 +249,48 @@ button:active {
 function cmd(c) {
     fetch('/' + c).catch(e => console.log(e));
 }
+
+let ledState = false;
+
+function toggleLED() {
+    ledState = !ledState;
+    const content = document.getElementById('ledContent');
+    
+    if (ledState) {
+        fetch('/LED_ON').catch(e => console.log(e));
+        content.classList.remove('led-off');
+        content.classList.add('led-on');
+    } else {
+        fetch('/LED_OFF').catch(e => console.log(e));
+        content.classList.remove('led-on');
+        content.classList.add('led-off');
+    }
+}
+
+// Set initial state
+document.addEventListener('DOMContentLoaded', function() {
+    document.getElementById('ledContent').classList.add('led-off');
+});
 </script>
 </body>
 </html>
 """
 
 # ========== MAIN PROGRAM LOOP ==========
+exit_program = False  # Flag untuk exit
+
 while True:
     # Tampilkan countdown, jika dibatalkan kembali ke sini
-    if not start_countdown():
-        time.sleep(2)  # Jeda 2 detik sebelum countdown lagi
-        continue  # Kembali ke awal (countdown lagi)
+    try:
+        if not start_countdown():
+            time.sleep(2)
+            continue
+    except KeyboardInterrupt:
+        # Double Ctrl+C saat countdown = EXIT COMPLETELY
+        print("\n\nEXITING PROGRAM...")
+        cleanup()
+        print("✓ Program terminated")
+        sys.exit(0)  # EXIT PROGRAM
     
     # Setup WiFi
     print("\n[✓] Starting WiFi...")
@@ -239,7 +305,7 @@ while True:
     s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     s.bind(('0.0.0.0', 80))
     s.listen(1)
-    s.settimeout(3)  # Timeout 3 detik
+    s.settimeout(3)
     print("[✓] Server ready")
 
     print("\n" + "="*50)
@@ -254,42 +320,56 @@ while True:
             try:
                 cl, addr = s.accept()
             except OSError:
-                # Timeout - beri kesempatan Ctrl+C
                 continue
 
             req = cl.recv(1024).decode()
             cmd = req.split()[1] if len(req.split()) > 1 else '/'
 
-            if '/F' in cmd:
+            if cmd == '/F':
                 maju()
-            elif '/B' in cmd:
+            elif cmd == '/B':
                 mundur()
-            elif '/L' in cmd:
+            elif cmd == '/L':
                 kiri()
-            elif '/R' in cmd:
+            elif cmd == '/R':
                 kanan()
-            elif '/S' in cmd:
+            elif cmd == '/S':
                 stop()
+            elif cmd == '/LED_ON':
+                led_on()
+            elif cmd == '/LED_OFF':
+                led_off()
 
             if cmd == '/':
-                cl.send('HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n')
+                cl.send("HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n")
                 cl.sendall(html)
             else:
-                cl.send('HTTP/1.1 200 OK\r\n\r\nOK')
+                cl.send("HTTP/1.1 200 OK\r\n\r\nOK")
 
             cl.close()
 
     except KeyboardInterrupt:
-        # Ctrl+C pertama - stop server, cleanup, kembali ke countdown
         print("\n\nServer stopping...")
         cleanup()
-        print("Returning to start menu...")
-        print("Press Ctrl+C again during countdown to exit\n")
-        time.sleep(2)
-        continue  # Kembali ke awal while True (countdown lagi)
+        print("\n" + "="*50)
+        print("Press Ctrl+C again within 3 seconds to EXIT")
+        print("atau tunggu restrat dan looping awal...")
+        print("="*50)
+        
+        # Tunggu 3 detik untuk Ctrl+C kedua
+        try:
+            time.sleep(3)
+            print("\nRestarting...\n")
+            continue
+        except KeyboardInterrupt:
+            # Double Ctrl+C = EXIT
+            print("\n\nKELUAR PROGRAM...")
+            cleanup()
+            print("✓ Program BEREHENTI")
+            sys.exit(0)
     
     except Exception as e:
-        print(f"\n Error: {e}")
+        print(f"\n❌ Error: {e}")
         cleanup()
         time.sleep(2)
-        continue  # Kembali ke countdown jika ada error
+        continue
